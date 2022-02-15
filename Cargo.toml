@@ -1,0 +1,12 @@
+[package]
+name = "circleci-junit-fix"
+authors = ["Conrad Ludgate <conradludgate@gmail.com>"]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Fixes junit reports to have proper integration with CircleCI"
+repository = "https://github.com/conradludgate/circleci-junit-fix"
+
+[dependencies]
+quick-xml = "0.22"
+memchr = "2.4"
