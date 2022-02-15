@@ -14,7 +14,7 @@ Otherwise, this repo also provides a static binary that performs the equivalent 
 ### With Cargo
 
 ```sh
-cargo install --locked --version 0.1.0
+cargo install circleci-junit-fix --locked --version 0.1.0
 ```
 
 ### With Prebuilt Binary
