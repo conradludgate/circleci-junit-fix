@@ -96,16 +96,18 @@ impl<R: BufRead, W: Write> Context<'_, R, W> {
                 e @ Event::Text(_) => {
                     self.write_event(e)?;
                 }
-                Event::Start(s) if s.name() == b"system-out" => {
+                Event::Start(s)
+                    if s.name() == b"system-out"
+                        || s.name() == b"system-err"
+                        || s.name() == b"rerunFailure" =>
+                {
                     self.write_event(Event::Start(s))?;
                 }
-                Event::End(s) if s.name() == b"system-out" => {
-                    self.write_event(Event::End(s))?;
-                }
-                Event::Start(s) if s.name() == b"system-err" => {
-                    self.write_event(Event::Start(s))?;
-                }
-                Event::End(s) if s.name() == b"system-err" => {
+                Event::End(s)
+                    if s.name() == b"system-out"
+                        || s.name() == b"system-err"
+                        || s.name() == b"rerunFailure" =>
+                {
                     self.write_event(Event::End(s))?;
                 }
                 Event::End(e) if e.name() == b"testcase" => {
