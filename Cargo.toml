@@ -1,7 +1,7 @@
 [package]
 name = "circleci-junit-fix"
 authors = ["Conrad Ludgate <conradludgate@gmail.com>"]
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
 license = "MIT"
 description = "Fixes junit reports to have proper integration with CircleCI"
