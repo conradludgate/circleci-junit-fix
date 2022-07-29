@@ -1,85 +1,171 @@
-use memchr::memchr;
+// use memchr::memchr;
 use quick_xml::events::attributes::Attribute;
-use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
+use quick_xml::events::{BytesStart, BytesText, Event};
 use quick_xml::Reader;
 use quick_xml::Writer;
 use std::borrow::Cow;
-use std::io::{stdin, stdout, BufReader};
+use std::io::{stdin, stdout, BufRead, BufReader, Stdin, Write};
 
-fn main() -> quick_xml::Result<()> {
-    let mut reader = Reader::from_reader(BufReader::new(stdin()));
-    reader.trim_text(true);
-    let mut writer = Writer::new(stdout());
-    let mut buf = Vec::new();
-
-    let mut failure = false;
-    let mut inside: Option<bool> = None; // true is stdout, false is stderr
-    let mut stdout = b"--- STDOUT:\n".to_vec();
-    let mut stderr = b"--- STDERR:&#xA;".to_vec();
-
-    loop {
-        match reader.read_event(&mut buf) {
-            Ok(Event::Start(ref e)) if e.name() == b"system-out" => {
-                inside = Some(true);
-            }
-            Ok(Event::Start(ref e)) if e.name() == b"system-err" => {
-                inside = Some(false);
-            }
-            Ok(Event::End(ref e)) if e.name() == b"system-out" => {
-                inside = None;
-            }
-            Ok(Event::End(ref e)) if e.name() == b"system-err" => {
-                inside = None;
-            }
-            Ok(Event::Text(ref e)) => match inside {
-                Some(true) => stdout.extend_from_slice(e),
-                Some(false) => replace_nl(e, &mut stderr),
-                None => {}
-            },
-            Ok(Event::Empty(ref e)) if e.name() == b"failure" => {
-                failure = true;
-            }
-            Ok(Event::End(ref e)) if e.name() == b"testcase" => {
-                if failure {
-                    let mut failure = BytesStart::owned(b"failure".to_vec(), "failure".len());
-                    failure.push_attribute(Attribute {
-                        key: b"message",
-                        value: Cow::Borrowed(&stderr),
-                    });
-                    writer.write_event(Event::Start(failure))?;
-                    writer.write_event(Event::Text(BytesText::from_plain(&stdout)))?;
-
-                    stdout.clear();
-                    stdout.extend_from_slice(b"--- STDOUT:\n");
-                    stderr.clear();
-                    stderr.extend_from_slice(b"--- STDERR:&#xA;");
-
-                    writer.write_event(Event::End(BytesEnd::borrowed(b"failure")))?;
-                }
-                failure = false;
-
-                writer.write_event(Event::End(BytesEnd::borrowed(b"testcase")))?;
-            }
-            Ok(Event::Eof) => break,
-            Ok(e) => assert!(writer.write_event(e).is_ok()),
-            Err(e) => panic!("Error at position {}: {:?}", reader.buffer_position(), e),
-        }
-        buf.clear();
-    }
-
-    Ok(())
+struct Context<R: BufRead> {
+    reader: Reader<R>,
+    failure: Vec<u8>,
 }
 
-fn replace_nl(mut bytes: &[u8], out: &mut Vec<u8>) {
-    out.reserve(bytes.len());
+impl Context<BufReader<Stdin>> {
+    pub fn new() -> Self {
+        let mut reader = Reader::from_reader(BufReader::new(stdin()));
+        reader.trim_text(true);
+        Self {
+            reader,
+            failure: Vec::new(),
+        }
+    }
+}
 
-    while let Some(idx) = memchr(b'\n', bytes) {
-        let (start, rest) = bytes.split_at(idx);
-        bytes = rest.split_at(1).1;
+impl<R: BufRead> Context<R> {
+    pub fn read_event<'b>(&mut self, buf: &'b mut Vec<u8>) -> quick_xml::Result<Event<'b>> {
+        buf.clear();
+        self.reader.read_event(buf)
+    }
+}
 
-        out.extend_from_slice(start);
-        out.extend_from_slice(b"&#xA;");
+fn main() -> quick_xml::Result<()> {
+    let mut writer = Writer::new(stdout());
+    let mut ctx = Context::new();
+    let mut buf = Vec::with_capacity(1024);
+
+    loop {
+        match ctx.read_event(&mut buf)? {
+            Event::Start(s) if s.name() == b"testsuites" => {
+                writer.write_event(Event::Start(s))?;
+                ctx.testsuites(&mut writer, &mut buf)?
+            }
+            Event::Eof => break Ok(()),
+            e => writer.write_event(e)?,
+        }
+    }
+}
+
+impl<R: BufRead> Context<R> {
+    fn testsuites<'b, W: Write>(
+        &mut self,
+        writer: &mut Writer<W>,
+        buf: &'b mut Vec<u8>,
+    ) -> quick_xml::Result<()> {
+        loop {
+            match self.read_event(buf)? {
+                Event::Start(s) if s.name() == b"testsuite" => {
+                    writer.write_event(Event::Start(s))?;
+                    self.testsuite(writer, buf)?
+                }
+                Event::End(e) if e.name() == b"testsuites" => {
+                    writer.write_event(Event::End(e))?;
+                    break Ok(());
+                }
+                e => {
+                    break Err(quick_xml::Error::UnexpectedEof(format!(
+                        "expected to parse testsuite or end testsuites, got {e:?}"
+                    )))
+                }
+            }
+        }
     }
 
-    out.extend_from_slice(bytes);
+    fn testsuite<'b, W: Write>(
+        &mut self,
+        writer: &mut Writer<W>,
+        buf: &'b mut Vec<u8>,
+    ) -> quick_xml::Result<()> {
+        loop {
+            match self.read_event(buf)? {
+                Event::Start(s) if s.name() == b"testcase" => {
+                    writer.write_event(Event::Start(s))?;
+                    self.testcase(writer, buf)?
+                }
+                Event::End(e) if e.name() == b"testsuite" => {
+                    writer.write_event(Event::End(e))?;
+                    break Ok(());
+                }
+                e => {
+                    break Err(quick_xml::Error::UnexpectedEof(format!(
+                        "expected to parse testcase or end testsuite, got {e:?}"
+                    )))
+                }
+            }
+        }
+    }
+
+    fn testcase<'b, W: Write>(
+        &mut self,
+        writer: &mut Writer<W>,
+        buf: &'b mut Vec<u8>,
+    ) -> quick_xml::Result<()> {
+        loop {
+            match self.read_event(buf)? {
+                Event::Start(s) if s.name() == b"failure" => {
+                    self.failure(writer, buf)?;
+                }
+                e @ Event::Text(_) => {
+                    writer.write_event(e)?;
+                }
+                Event::Start(s) if s.name() == b"system-out" => {
+                    writer.write_event(Event::Start(s))?;
+                }
+                Event::End(s) if s.name() == b"system-out" => {
+                    writer.write_event(Event::End(s))?;
+                }
+                Event::Start(s) if s.name() == b"system-err" => {
+                    writer.write_event(Event::Start(s))?;
+                }
+                Event::End(s) if s.name() == b"system-err" => {
+                    writer.write_event(Event::End(s))?;
+                }
+                Event::End(e) if e.name() == b"testcase" => {
+                    writer.write_event(Event::End(e))?;
+                    break Ok(());
+                }
+                e => {
+                    break Err(quick_xml::Error::UnexpectedEof(format!(
+                        "expected to parse testcase or end testsuite, got {e:?}"
+                    )))
+                }
+            }
+        }
+    }
+
+    fn failure<'b, W: Write>(
+        &mut self,
+        writer: &mut Writer<W>,
+        buf: &'b mut Vec<u8>,
+    ) -> quick_xml::Result<()> {
+        self.failure.clear();
+
+        loop {
+            match self.read_event(buf)? {
+                Event::Text(s) => {
+                    self.failure.extend_from_slice(s.escaped());
+                }
+                Event::End(s) if s.name() == b"failure" => {
+                    let mut start = BytesStart::borrowed_name(b"failure");
+                    start.push_attribute(Attribute {
+                        key: b"type",
+                        value: Cow::Borrowed(b"test failure"),
+                    });
+                    start.push_attribute(Attribute {
+                        key: b"message",
+                        value: Cow::Borrowed(&self.failure),
+                    });
+                    writer.write_event(Event::Start(start))?;
+                    writer.write_event(Event::Text(BytesText::from_escaped(&self.failure)))?;
+                    writer.write_event(Event::End(s))?;
+                    break Ok(());
+                }
+                e => {
+                    break Err(quick_xml::Error::UnexpectedEof(format!(
+                        "expected to parse testcase or end testsuite, got {e:?}"
+                    )))
+                }
+            }
+        }
+    }
 }
