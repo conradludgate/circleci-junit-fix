@@ -1,4 +1,3 @@
-// use memchr::memchr;
 use quick_xml::events::attributes::Attribute;
 use quick_xml::events::{BytesStart, BytesText, Event};
 use quick_xml::Reader;
@@ -6,60 +5,57 @@ use quick_xml::Writer;
 use std::borrow::Cow;
 use std::io::{stdin, stdout, BufRead, BufReader, Stdin, Write};
 
-struct Context<R: BufRead> {
+struct Context<'w, R: BufRead, W: Write> {
     reader: Reader<R>,
-    failure: Vec<u8>,
+    writer: &'w mut Writer<W>,
 }
 
-impl Context<BufReader<Stdin>> {
-    pub fn new() -> Self {
+impl<'w, W: Write> Context<'w, BufReader<Stdin>, W> {
+    pub fn new(writer: &'w mut Writer<W>) -> Self {
         let mut reader = Reader::from_reader(BufReader::new(stdin()));
         reader.trim_text(true);
-        Self {
-            reader,
-            failure: Vec::new(),
-        }
+        Self { reader, writer }
     }
 }
 
-impl<R: BufRead> Context<R> {
+impl<'w, R: BufRead, W: Write> Context<'w, R, W> {
     pub fn read_event<'b>(&mut self, buf: &'b mut Vec<u8>) -> quick_xml::Result<Event<'b>> {
         buf.clear();
         self.reader.read_event(buf)
+    }
+
+    pub fn write_event(&mut self, e: Event<'_>) -> quick_xml::Result<()> {
+        self.writer.write_event(e)
     }
 }
 
 fn main() -> quick_xml::Result<()> {
     let mut writer = Writer::new(stdout());
-    let mut ctx = Context::new();
+    let mut ctx = Context::new(&mut writer);
     let mut buf = Vec::with_capacity(1024);
 
     loop {
         match ctx.read_event(&mut buf)? {
             Event::Start(s) if s.name() == b"testsuites" => {
-                writer.write_event(Event::Start(s))?;
-                ctx.testsuites(&mut writer, &mut buf)?
+                ctx.write_event(Event::Start(s))?;
+                ctx.testsuites(&mut buf)?
             }
             Event::Eof => break Ok(()),
-            e => writer.write_event(e)?,
+            e => ctx.write_event(e)?,
         }
     }
 }
 
-impl<R: BufRead> Context<R> {
-    fn testsuites<'b, W: Write>(
-        &mut self,
-        writer: &mut Writer<W>,
-        buf: &'b mut Vec<u8>,
-    ) -> quick_xml::Result<()> {
+impl<R: BufRead, W: Write> Context<'_, R, W> {
+    fn testsuites(&mut self, buf: &mut Vec<u8>) -> quick_xml::Result<()> {
         loop {
             match self.read_event(buf)? {
                 Event::Start(s) if s.name() == b"testsuite" => {
-                    writer.write_event(Event::Start(s))?;
-                    self.testsuite(writer, buf)?
+                    self.write_event(Event::Start(s))?;
+                    self.testsuite(buf)?
                 }
                 Event::End(e) if e.name() == b"testsuites" => {
-                    writer.write_event(Event::End(e))?;
+                    self.write_event(Event::End(e))?;
                     break Ok(());
                 }
                 e => {
@@ -71,19 +67,15 @@ impl<R: BufRead> Context<R> {
         }
     }
 
-    fn testsuite<'b, W: Write>(
-        &mut self,
-        writer: &mut Writer<W>,
-        buf: &'b mut Vec<u8>,
-    ) -> quick_xml::Result<()> {
+    fn testsuite(&mut self, buf: &mut Vec<u8>) -> quick_xml::Result<()> {
         loop {
             match self.read_event(buf)? {
                 Event::Start(s) if s.name() == b"testcase" => {
-                    writer.write_event(Event::Start(s))?;
-                    self.testcase(writer, buf)?
+                    self.write_event(Event::Start(s))?;
+                    self.testcase(buf)?
                 }
                 Event::End(e) if e.name() == b"testsuite" => {
-                    writer.write_event(Event::End(e))?;
+                    self.write_event(Event::End(e))?;
                     break Ok(());
                 }
                 e => {
@@ -95,33 +87,29 @@ impl<R: BufRead> Context<R> {
         }
     }
 
-    fn testcase<'b, W: Write>(
-        &mut self,
-        writer: &mut Writer<W>,
-        buf: &'b mut Vec<u8>,
-    ) -> quick_xml::Result<()> {
+    fn testcase(&mut self, buf: &mut Vec<u8>) -> quick_xml::Result<()> {
         loop {
             match self.read_event(buf)? {
                 Event::Start(s) if s.name() == b"failure" => {
-                    self.failure(writer, buf)?;
+                    self.failure(buf)?;
                 }
                 e @ Event::Text(_) => {
-                    writer.write_event(e)?;
+                    self.write_event(e)?;
                 }
                 Event::Start(s) if s.name() == b"system-out" => {
-                    writer.write_event(Event::Start(s))?;
+                    self.write_event(Event::Start(s))?;
                 }
                 Event::End(s) if s.name() == b"system-out" => {
-                    writer.write_event(Event::End(s))?;
+                    self.write_event(Event::End(s))?;
                 }
                 Event::Start(s) if s.name() == b"system-err" => {
-                    writer.write_event(Event::Start(s))?;
+                    self.write_event(Event::Start(s))?;
                 }
                 Event::End(s) if s.name() == b"system-err" => {
-                    writer.write_event(Event::End(s))?;
+                    self.write_event(Event::End(s))?;
                 }
                 Event::End(e) if e.name() == b"testcase" => {
-                    writer.write_event(Event::End(e))?;
+                    self.write_event(Event::End(e))?;
                     break Ok(());
                 }
                 e => {
@@ -133,17 +121,13 @@ impl<R: BufRead> Context<R> {
         }
     }
 
-    fn failure<'b, W: Write>(
-        &mut self,
-        writer: &mut Writer<W>,
-        buf: &'b mut Vec<u8>,
-    ) -> quick_xml::Result<()> {
-        self.failure.clear();
+    fn failure(&mut self, buf: &mut Vec<u8>) -> quick_xml::Result<()> {
+        let mut failure = Vec::new();
 
         loop {
             match self.read_event(buf)? {
                 Event::Text(s) => {
-                    self.failure.extend_from_slice(s.escaped());
+                    failure = s.unescaped()?.into_owned();
                 }
                 Event::End(s) if s.name() == b"failure" => {
                     let mut start = BytesStart::borrowed_name(b"failure");
@@ -153,11 +137,11 @@ impl<R: BufRead> Context<R> {
                     });
                     start.push_attribute(Attribute {
                         key: b"message",
-                        value: Cow::Borrowed(&self.failure),
+                        value: Cow::Borrowed(&failure),
                     });
-                    writer.write_event(Event::Start(start))?;
-                    writer.write_event(Event::Text(BytesText::from_escaped(&self.failure)))?;
-                    writer.write_event(Event::End(s))?;
+                    self.write_event(Event::Start(start))?;
+                    self.write_event(Event::Text(BytesText::from_plain(&failure)))?;
+                    self.write_event(Event::End(s))?;
                     break Ok(());
                 }
                 e => {
