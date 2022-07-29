@@ -8,5 +8,4 @@ description = "Fixes junit reports to have proper integration with CircleCI"
 repository = "https://github.com/conradludgate/circleci-junit-fix"
 
 [dependencies]
-quick-xml = "0.22"
-memchr = "2.4"
+quick-xml = "0.23"
