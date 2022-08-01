@@ -1,5 +1,5 @@
 use quick_xml::events::attributes::Attribute;
-use quick_xml::events::{BytesStart, BytesText, Event};
+use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
 use quick_xml::Writer;
 use std::borrow::Cow;
@@ -124,25 +124,24 @@ impl<R: BufRead, W: Write> Context<'_, R, W> {
     }
 
     fn failure(&mut self, buf: &mut Vec<u8>) -> quick_xml::Result<()> {
-        let mut failure = Vec::new();
+        let mut start = BytesStart::borrowed_name(b"failure");
+        start.push_attribute(Attribute {
+            key: b"type",
+            value: Cow::Borrowed(b"test failure"),
+        });
+        start.push_attribute(Attribute {
+            key: b"message",
+            value: Cow::Borrowed(b""),
+        });
+        self.write_event(Event::Start(start))?;
 
         loop {
             match self.read_event(buf)? {
                 Event::Text(s) => {
-                    failure = s.escaped().to_owned();
+                    // failure = s.escaped().to_owned();
+                    self.write_event(Event::Text(s))?;
                 }
                 Event::End(s) if s.name() == b"failure" => {
-                    let mut start = BytesStart::borrowed_name(b"failure");
-                    start.push_attribute(Attribute {
-                        key: b"type",
-                        value: Cow::Borrowed(b"test failure"),
-                    });
-                    start.push_attribute(Attribute {
-                        key: b"message",
-                        value: Cow::Borrowed(&failure),
-                    });
-                    self.write_event(Event::Start(start))?;
-                    self.write_event(Event::Text(BytesText::from_plain(&failure)))?;
                     self.write_event(Event::End(s))?;
                     break Ok(());
                 }
