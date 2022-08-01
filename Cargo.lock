@@ -4,7 +4,7 @@ version = 3
 
 [[package]]
 name = "circleci-junit-fix"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "quick-xml",
 ]
