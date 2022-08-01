@@ -129,7 +129,7 @@ impl<R: BufRead, W: Write> Context<'_, R, W> {
         loop {
             match self.read_event(buf)? {
                 Event::Text(s) => {
-                    failure = s.unescaped()?.into_owned();
+                    failure = s.escaped().to_owned();
                 }
                 Event::End(s) if s.name() == b"failure" => {
                     let mut start = BytesStart::borrowed_name(b"failure");
