@@ -58,11 +58,7 @@ impl<R: BufRead, W: Write> Context<'_, R, W> {
                     self.write_event(Event::End(e))?;
                     break Ok(());
                 }
-                e => {
-                    break Err(quick_xml::Error::UnexpectedEof(format!(
-                        "expected to parse testsuite or end testsuites, got {e:?}"
-                    )))
-                }
+                e => self.write_event(e)?,
             }
         }
     }
@@ -78,11 +74,7 @@ impl<R: BufRead, W: Write> Context<'_, R, W> {
                     self.write_event(Event::End(e))?;
                     break Ok(());
                 }
-                e => {
-                    break Err(quick_xml::Error::UnexpectedEof(format!(
-                        "expected to parse testcase or end testsuite, got {e:?}"
-                    )))
-                }
+                e => self.write_event(e)?,
             }
         }
     }
@@ -97,33 +89,11 @@ impl<R: BufRead, W: Write> Context<'_, R, W> {
                     });
                     self.write_event(Event::Start(s))?;
                 }
-                e @ Event::Text(_) => {
-                    self.write_event(e)?;
-                }
-                Event::Start(s)
-                    if s.name() == b"system-out"
-                        || s.name() == b"system-err"
-                        || s.name() == b"rerunFailure" =>
-                {
-                    self.write_event(Event::Start(s))?;
-                }
-                Event::End(s)
-                    if s.name() == b"system-out"
-                        || s.name() == b"system-err"
-                        || s.name() == b"failure"
-                        || s.name() == b"rerunFailure" =>
-                {
-                    self.write_event(Event::End(s))?;
-                }
                 Event::End(e) if e.name() == b"testcase" => {
                     self.write_event(Event::End(e))?;
                     break Ok(());
                 }
-                e => {
-                    break Err(quick_xml::Error::UnexpectedEof(format!(
-                        "expected to parse testcase or end testsuite, got {e:?}"
-                    )))
-                }
+                e => self.write_event(e)?,
             }
         }
     }
