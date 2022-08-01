@@ -1,7 +1,7 @@
-use quick_xml::events::attributes::Attribute;
-use quick_xml::events::{BytesStart, Event};
-use quick_xml::Reader;
-use quick_xml::Writer;
+use quick_xml::{
+    events::{attributes::Attribute, Event},
+    Reader, Writer,
+};
 use std::borrow::Cow;
 use std::io::{stdin, stdout, BufRead, BufReader, Stdin, Write};
 
@@ -90,8 +90,12 @@ impl<R: BufRead, W: Write> Context<'_, R, W> {
     fn testcase(&mut self, buf: &mut Vec<u8>) -> quick_xml::Result<()> {
         loop {
             match self.read_event(buf)? {
-                Event::Start(s) if s.name() == b"failure" => {
-                    self.failure(buf)?;
+                Event::Start(mut s) if s.name() == b"failure" => {
+                    s.push_attribute(Attribute {
+                        key: b"message",
+                        value: Cow::Borrowed(b""),
+                    });
+                    self.write_event(Event::Start(s))?;
                 }
                 e @ Event::Text(_) => {
                     self.write_event(e)?;
@@ -106,43 +110,13 @@ impl<R: BufRead, W: Write> Context<'_, R, W> {
                 Event::End(s)
                     if s.name() == b"system-out"
                         || s.name() == b"system-err"
+                        || s.name() == b"failure"
                         || s.name() == b"rerunFailure" =>
                 {
                     self.write_event(Event::End(s))?;
                 }
                 Event::End(e) if e.name() == b"testcase" => {
                     self.write_event(Event::End(e))?;
-                    break Ok(());
-                }
-                e => {
-                    break Err(quick_xml::Error::UnexpectedEof(format!(
-                        "expected to parse testcase or end testsuite, got {e:?}"
-                    )))
-                }
-            }
-        }
-    }
-
-    fn failure(&mut self, buf: &mut Vec<u8>) -> quick_xml::Result<()> {
-        let mut start = BytesStart::borrowed_name(b"failure");
-        start.push_attribute(Attribute {
-            key: b"type",
-            value: Cow::Borrowed(b"test failure"),
-        });
-        start.push_attribute(Attribute {
-            key: b"message",
-            value: Cow::Borrowed(b""),
-        });
-        self.write_event(Event::Start(start))?;
-
-        loop {
-            match self.read_event(buf)? {
-                Event::Text(s) => {
-                    // failure = s.escaped().to_owned();
-                    self.write_event(Event::Text(s))?;
-                }
-                Event::End(s) if s.name() == b"failure" => {
-                    self.write_event(Event::End(s))?;
                     break Ok(());
                 }
                 e => {
